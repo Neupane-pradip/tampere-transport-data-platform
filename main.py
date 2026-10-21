@@ -1,5 +1,7 @@
 import json
+import logging
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -7,16 +9,22 @@ import requests
 from dotenv import load_dotenv
 
 
-# Find the project folder, regardless of where Python is run from.
+# Keep paths relative to this file.
 PROJECT_ROOT = Path(__file__).resolve().parent
-
-# Store collected API responses here.
 RAW_DATA_DIR = PROJECT_ROOT / "data" / "raw"
+LOG_DIR = PROJECT_ROOT / "logs"
 
-# Digitransit's Waltti GraphQL endpoint.
 API_URL = "https://api.digitransit.fi/routing/v2/waltti/gtfs/v1"
 
-# Request the next five departures from Hervannan kampus A.
+# Three attempts means the first request plus up to two retries.
+MAX_ATTEMPTS = 3
+BACKOFF_SECONDS = 2
+
+# Retry only these temporary server errors.
+RETRYABLE_STATUS_CODES = {500, 502, 503, 504}
+
+logger = logging.getLogger(__name__)
+
 QUERY = """
 {
   stop(id: "tampere:0835") {
@@ -42,56 +50,130 @@ QUERY = """
 """
 
 
-def fetch_departures(api_key):
-    """Request departures and check the API response."""
+def configure_logging():
+    """Write logs to both the terminal and a local file."""
 
-    # Send the key in a header and the query in the JSON body.
-    response = requests.post(
-        API_URL,
-        headers={
-            "digitransit-subscription-key": api_key,
-        },
-        json={"query": QUERY},
-        timeout=30,
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Display log timestamps in UTC.
+    logging.Formatter.converter = time.gmtime
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)sZ | %(levelname)s | %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler(
+                LOG_DIR / "pipeline.log",
+                encoding="utf-8",
+            ),
+        ],
     )
 
-    # Stop if the server returns an HTTP error.
-    response.raise_for_status()
 
-    # Convert the JSON response into Python dictionaries and lists.
-    payload = response.json()
+def fetch_departures(api_key):
+    """Fetch departures, retrying selected temporary failures."""
 
-    # GraphQL can return query errors even when HTTP succeeds.
-    if payload.get("errors"):
-        raise RuntimeError(
-            "GraphQL returned errors:\n"
-            + json.dumps(payload["errors"], indent=2, ensure_ascii=False)
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        logger.info("API attempt %s/%s", attempt, MAX_ATTEMPTS)
+
+        try:
+            response = requests.post(
+                API_URL,
+                headers={
+                    "digitransit-subscription-key": api_key,
+                },
+                json={"query": QUERY},
+                # Connection timeout, then read inactivity timeout.
+                timeout=(10, 30),
+            )
+
+            response.raise_for_status()
+
+        except requests.exceptions.SSLError:
+            # Certificate problems need investigation.
+            # SSLError is a ConnectionError subclass, so catch it first.
+            raise
+
+        except (
+            requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout,
+        ) as error:
+            # Log the error type, never request headers or the key.
+            reason = type(error).__name__
+
+        except requests.exceptions.HTTPError as error:
+            status_code = error.response.status_code
+
+            if status_code not in RETRYABLE_STATUS_CODES:
+                # Authentication errors and rate limits stop here.
+                raise
+
+            reason = f"HTTP {status_code}"
+            error.response.close()
+
+        else:
+            # This block runs only when the HTTP request succeeds.
+            # JSON and GraphQL problems are not retried.
+            payload = response.json()
+
+            if not isinstance(payload, dict):
+                raise RuntimeError("Expected a JSON object from the API.")
+
+            if payload.get("errors"):
+                raise RuntimeError(
+                    "GraphQL returned errors:\n"
+                    + json.dumps(
+                        payload["errors"],
+                        indent=2,
+                        ensure_ascii=False,
+                    )
+                )
+
+            data = payload.get("data")
+
+            if not isinstance(data, dict) or data.get("stop") is None:
+                raise RuntimeError(
+                    "The API did not return the requested stop."
+                )
+
+            logger.info("API request succeeded")
+            return payload
+
+        # Failed attempts reach this point.
+        if attempt == MAX_ATTEMPTS:
+            raise RuntimeError(
+                f"API request failed after {MAX_ATTEMPTS} attempts: "
+                f"{reason}"
+            )
+
+        # Wait 2 seconds after attempt 1, then 4 after attempt 2.
+        wait_seconds = BACKOFF_SECONDS * (2 ** (attempt - 1))
+
+        logger.warning(
+            "%s. Retrying in %s seconds",
+            reason,
+            wait_seconds,
         )
 
-    # Check that the requested stop exists in the response.
-    if payload.get("data", {}).get("stop") is None:
-        raise RuntimeError("The API did not return the requested stop.")
-
-    return payload
+        time.sleep(wait_seconds)
 
 
 def save_raw_snapshot(payload, requested_at, received_at):
-    """Save the API response together with collection information."""
+    """Save a successful response and its collection metadata."""
 
-    # Create data/raw if it does not already exist.
     RAW_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Use a UTC timestamp with microseconds to distinguish runs.
     timestamp = received_at.strftime("%Y%m%dT%H%M%S_%fZ")
     file_path = RAW_DATA_DIR / f"departures_tampere_0835_{timestamp}.json"
 
-    # Keep collection details separate from the original response.
-    # Never include the API key.
     snapshot = {
         "metadata": {
             "source": "digitransit",
             "endpoint": API_URL,
             "stop_id": "tampere:0835",
+            # This interval includes any retry attempts and waits.
             "requested_at_utc": requested_at.isoformat(),
             "received_at_utc": received_at.isoformat(),
             "query": QUERY,
@@ -99,8 +181,7 @@ def save_raw_snapshot(payload, requested_at, received_at):
         "response": payload,
     }
 
-    # "x" creates a new file and refuses to overwrite an existing one.
-    # UTF-8 preserves Finnish characters.
+    # Refuse to overwrite an existing snapshot.
     with file_path.open("x", encoding="utf-8") as file:
         json.dump(snapshot, file, indent=2, ensure_ascii=False)
         file.write("\n")
@@ -109,37 +190,43 @@ def save_raw_snapshot(payload, requested_at, received_at):
 
 
 def main():
-    """Load settings, fetch departures, and save a snapshot."""
+    """Run one collection and return its exit code."""
 
-    # Read private settings from the project's .env file.
-    load_dotenv(PROJECT_ROOT / ".env")
+    configure_logging()
+    logger.info("Pipeline started")
 
-    api_key = os.getenv("DIGITRANSIT_API_KEY", "").strip()
+    try:
+        load_dotenv(PROJECT_ROOT / ".env")
+        api_key = os.getenv("DIGITRANSIT_API_KEY", "").strip()
 
-    # Stop before making a request if the key is missing.
-    if not api_key:
-        raise RuntimeError(
-            "Missing DIGITRANSIT_API_KEY. Add your key to the .env file."
+        if not api_key:
+            raise RuntimeError(
+                "Missing DIGITRANSIT_API_KEY. Check your .env file."
+            )
+
+        requested_at = datetime.now(timezone.utc)
+        payload = fetch_departures(api_key)
+        received_at = datetime.now(timezone.utc)
+
+        file_path = save_raw_snapshot(
+            payload,
+            requested_at,
+            received_at,
         )
 
-    print("Requesting departures for Hervannan kampus A...")
+        logger.info("Raw snapshot saved to: %s", file_path)
+        logger.info("Pipeline finished successfully")
+        return 0
 
-    # Record when the request starts and when its result is available.
-    requested_at = datetime.now(timezone.utc)
-    payload = fetch_departures(api_key)
-    received_at = datetime.now(timezone.utc)
-
-    file_path = save_raw_snapshot(
-        payload,
-        requested_at,
-        received_at,
-    )
-
-    # Display the result so we can inspect it while learning.
-    print(json.dumps(payload, indent=2, ensure_ascii=False))
-    print(f"\nRaw snapshot saved to: {file_path}")
+    except (
+        requests.exceptions.RequestException,
+        RuntimeError,
+        OSError,
+    ) as error:
+        logger.error("Pipeline failed: %s", error)
+        return 1
 
 
-# Run the program only when this file is executed directly.
 if __name__ == "__main__":
-    main()
+    # Exit code 0 means success; 1 means failure.
+    raise SystemExit(main())

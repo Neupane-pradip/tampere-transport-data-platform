@@ -12,6 +12,26 @@ data from Digitransit.
 - Records the endpoint, query and collection timestamps.
 - Keeps API keys outside source code.
 
+
+## Reliability and logging
+
+The collector makes up to three attempts for connection failures,
+timeouts and HTTP 500, 502, 503 and 504 responses.
+
+It waits 2 seconds before the second attempt and 4 seconds before
+the third attempt.
+
+Authentication errors, rate limits and GraphQL errors stop the run.
+
+Logs are written to the terminal and `logs/pipeline.log`, using UTC.
+A successful run exits with code 0; a failed run exits with code 1.
+
+Run the automated tests:
+
+```powershell
+python -m unittest discover -s tests -v
+
+
 ## Tools
 
 - Python
@@ -98,7 +118,6 @@ They do not show when the provider originally generated a prediction.
 
 ## Planned next steps
 
-- Retries and logging
 - Data validation
 - PostgreSQL loading
 - SQL transformations
