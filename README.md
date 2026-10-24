@@ -63,6 +63,7 @@ in Tampere.
 | `logs/` | Local operational logs; ignored by Git |
 | `sql/data_quality_checks.sql` | SQL queries for inspecting stored data quality |
 | `sql/departure_analysis.sql` | Queries for real-time availability, statuses and predicted delays |
+| `sql/collection_monitoring.sql` | Queries for data freshness, daily collection counts and gaps |
 
 ## Setup
 
@@ -438,6 +439,36 @@ identities were found.
 These checks inspect the data currently stored. They do not run
 automatically as part of the Python pipeline.
 
+## Scheduled collection and monitoring
+
+The local transport pipeline is scheduled through Windows Task Scheduler
+to run every five minutes.
+
+The task uses the project's virtual-environment Python interpreter
+and runs `pipeline.py`. Overlapping task instances are disabled.
+
+The current configuration runs while the user is logged on.
+Collection requires the computer to be awake, PostgreSQL to be
+running and network access to be available.
+
+The file `sql/collection_monitoring.sql` contains manual queries for:
+
+- The latest loaded observation time and its age.
+- Recent loaded snapshots.
+- Daily snapshot and observation counts.
+- Intervals between loaded snapshots.
+- Gaps longer than ten minutes.
+
+Daily counts use Helsinki calendar dates.
+
+These queries inspect loaded departure observations. They cannot
+distinguish failed runs from successful snapshots containing zero
+departures. Raw files, application logs and Task Scheduler history
+help investigate those cases.
+
+Monitoring queries are run manually; automatic alerts are not
+implemented.
+
 ## What I am learning
 
 - API authentication and HTTP requests
@@ -465,8 +496,7 @@ and use the results to develop my own understanding.
 
 ## Planned next steps
 
-- SQL analysis of real-time availability and predicted delays
-- Scheduled collection and monitoring
+- Pipeline run tracking and automatic failure alerts
 - Reports on predicted delays and real-time data availability
 
 ## Data source
