@@ -25,6 +25,11 @@ in Tampere.
   through one pipeline command.
 - Includes automated tests for collection and transformation.
 - Includes an optional PostgreSQL rollback integration test.
+- Includes SQL checks for observation counts, missing required values,
+  real-time field consistency, predicted delay calculations and
+  repeated observation identities.
+- Includes SQL analysis of real-time availability, observation statuses
+  and predicted delays, including summaries by route.
 
 ## Tools
 
@@ -56,6 +61,8 @@ in Tampere.
 | `data/raw/` | Collected API snapshots; ignored by Git |
 | `data/processed/` | Output from the standalone transformation command; ignored by Git |
 | `logs/` | Local operational logs; ignored by Git |
+| `sql/data_quality_checks.sql` | SQL queries for inspecting stored data quality |
+| `sql/departure_analysis.sql` | Queries for real-time availability, statuses and predicted delays |
 
 ## Setup
 
@@ -408,6 +415,29 @@ The rollback integration test has passed against the local database.
 Passing tests cover these scenarios, not every possible failure.
 The complete pipeline has also been verified through a manual run.
 
+## SQL data-quality checks
+
+The file `sql/data_quality_checks.sql` contains manual checks for:
+
+- Total observations and observation counts per snapshot.
+- Missing or blank values in selected required fields.
+- Consistency between the real-time flag, prediction and delay fields.
+- Agreement between predicted delays and departure timestamps.
+- Repeated observation identities.
+
+To run the checks, open pgAdmin, select `tampere_transport`,
+open Query Tool and execute the queries from the file.
+
+The first checks were run against 10 observations from two snapshots,
+with five observations per snapshot.
+
+The checked required fields had no missing values. No real-time
+field inconsistencies, delay mismatches or repeated observation
+identities were found.
+
+These checks inspect the data currently stored. They do not run
+automatically as part of the Python pipeline.
+
 ## What I am learning
 
 - API authentication and HTTP requests
@@ -435,7 +465,7 @@ and use the results to develop my own understanding.
 
 ## Planned next steps
 
-- SQL transformations and data-quality checks
+- SQL analysis of real-time availability and predicted delays
 - Scheduled collection and monitoring
 - Reports on predicted delays and real-time data availability
 
