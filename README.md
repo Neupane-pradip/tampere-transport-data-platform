@@ -1,39 +1,64 @@
 # Tampere Public Transport Data Platform
 
-A data engineering learning project using Tampere public transport data
-from Digitransit.
+A local data engineering learning project using Tampere public
+transport data from Digitransit.
 
 I am building this project step by step to learn how to collect,
-validate, transform and store data from a real API.
+validate, transform, store and analyse data from a real API.
 
-The starting point is tram departures from **Hervannan kampus A**
-in Tampere.
+The starting point is departures from **Hervannan kampus A**
+in Tampere, stop `tampere:0835`.
+
+## Project status
+
+The project implements a local ETL pipeline with PostgreSQL storage,
+pipeline execution tracking, automated tests and manual SQL analysis
+and monitoring.
+
+Collection depends on the local computer, network connection and
+PostgreSQL service being available.
+
+Email notifications are not included in this version.
+
+A written analysis report remains to be completed.
+
+## Data flow
+
+```text
+Digitransit API
+    |
+    v
+Timestamped raw JSON snapshot
+    |
+    v
+Validation and transformation
+    |
+    v
+PostgreSQL departure observations
+```
+
+The pipeline also records execution progress and outcomes in
+`public.pipeline_runs`.
 
 ## Current functionality
 
-- Fetches the next five departures from the selected stop.
+- Requests the next five departures from the selected stop.
 - Collects timetable information and available real-time predictions.
-- Uses credentials stored outside source code.
-- Retries selected temporary connection and server failures.
+- Reads credentials from environment variables and a private `.env`.
+- Retries selected temporary API failures.
 - Writes operational logs with UTC timestamps.
 - Saves successful responses as timestamped raw JSON snapshots.
 - Validates and transforms snapshots into flat departure records.
-- Loads departure observations into local PostgreSQL.
-- Loads each batch in one transaction.
-- Skips duplicate observations using a database unique constraint.
-- Runs collection, saving, validation, transformation and loading
-  through one pipeline command.
-- Includes automated tests for collection and transformation.
-- Includes an optional PostgreSQL rollback integration test.
-- Includes SQL checks for observation counts, missing required values,
-  real-time field consistency, predicted delay calculations and
-  repeated observation identities.
-- Includes SQL analysis of real-time availability, observation statuses
-  and predicted delays, including summaries by route.
+- Loads observations into PostgreSQL in one transaction.
+- Skips duplicates using a database unique constraint.
+- Records pipeline stages, outcomes, filenames and row counts.
+- Includes automated collection, transformation and pipeline tests.
+- Includes an optional database rollback integration test.
+- Provides SQL quality checks, analysis and monitoring queries.
 
 ## Tools
 
-- Python 3.13
+- Python
 - Requests
 - python-dotenv
 - Psycopg 3
@@ -41,71 +66,69 @@ in Tampere.
 - GraphQL
 - JSON
 - Python unittest
+- Windows Task Scheduler
 - Git and GitHub
 
 ## Project files
 
 | File or folder | Purpose |
 |---|---|
-| `pipeline.py` | Collect, save, validate, transform and load one new snapshot |
-| `main.py` | Fetch departures and save raw snapshots |
-| `transform.py` | Validate and transform a saved snapshot |
-| `load.py` | Validate and load a selected raw snapshot into PostgreSQL |
-| `tests/test_main.py` | Test collection and retry behaviour |
+| `main.py` | Collect departures and save raw snapshots |
+| `transform.py` | Validate and transform a saved raw snapshot |
+| `load.py` | Validate and load a selected raw snapshot |
+| `pipeline.py` | Run collection through database loading with execution tracking |
+| `run_tracking.py` | Record pipeline execution progress and outcomes |
+| `sql/001_create_departure_observations.sql` | Create the observations table and constraints |
+| `sql/002_create_pipeline_runs.sql` | Create the execution-tracking table |
+| `sql/data_quality_checks.sql` | Inspect stored data quality |
+| `sql/departure_analysis.sql` | Analyse availability, statuses and predicted delays |
+| `sql/collection_monitoring.sql` | Inspect loaded snapshots and collection gaps |
+| `sql/run_monitoring.sql` | Inspect execution outcomes, freshness and unfinished runs |
+| `tests/test_main.py` | Test collection and retries |
 | `tests/test_transform.py` | Test validation and transformation |
-| `tests/test_load_integration.py` | Test database rollback after a failed batch |
-| `sql/` | Database SQL files |
+| `tests/test_pipeline_failure.py` | Test simulated collection-failure handling |
+| `tests/test_load_integration.py` | Test PostgreSQL batch rollback |
 | `requirements.txt` | Required Python packages |
-| `.env.example` | Example configuration without real credentials |
+| `.env.example` | Configuration template without actual credentials |
 | `.env` | Private local configuration; ignored by Git |
-| `data/raw/` | Collected API snapshots; ignored by Git |
-| `data/processed/` | Output from the standalone transformation command; ignored by Git |
-| `logs/` | Local operational logs; ignored by Git |
-| `sql/data_quality_checks.sql` | SQL queries for inspecting stored data quality |
-| `sql/departure_analysis.sql` | Queries for real-time availability, statuses and predicted delays |
-| `sql/collection_monitoring.sql` | Queries for data freshness, daily collection counts and gaps |
+| `data/raw/` | Raw snapshots; ignored by Git |
+| `data/processed/` | Standalone transformation output; ignored by Git |
+| `logs/` | Local logs; ignored by Git |
 
 ## Setup
 
-Run these commands in PowerShell from the project folder.
+Run commands from the project root in PowerShell.
 
-### 1. Create a virtual environment
+### 1. Create and activate a virtual environment
 
 ```powershell
 python -m venv .venv
-```
-
-### 2. Activate it
-
-```powershell
 .\.venv\Scripts\Activate.ps1
 ```
 
-If the terminal already shows `(.venv)`, the environment is active.
+If the terminal already shows `(.venv)`, activation may already
+be complete.
 
-### 3. Install dependencies
+### 2. Install dependencies
 
 ```powershell
 python -m pip install -r requirements.txt
 ```
 
-### 4. Configure credentials
+### 3. Configure credentials
 
-For the first setup, copy the example configuration:
+For a new setup only:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-Register and subscribe through the
-[Digitransit developer portal](https://portal-api.digitransit.fi/)
-to obtain an API key.
+Do not overwrite an existing working `.env`.
 
-Configure these values in `.env`, using your own credentials:
+Configure the following values locally:
 
 ```dotenv
 DIGITRANSIT_API_KEY=your_api_key
-
 DB_HOST=localhost
 DB_PORT=5432
 DB_NAME=tampere_transport
@@ -113,27 +136,44 @@ DB_USER=transport_user
 DB_PASSWORD=your_database_password
 ```
 
-Keep actual credentials private. Never commit `.env` to GitHub.
+Obtain an API key through the
+[Digitransit developer portal](https://portal-api.digitransit.fi/).
 
-Check that Git ignores it:
+Never commit actual credentials.
+
+Check that Git ignores the local configuration:
 
 ```powershell
 git check-ignore .env
 ```
 
-### 5. Prepare PostgreSQL
+### 4. Prepare PostgreSQL
 
-The current local setup uses:
+The project expects:
 
-- Database: `tampere_transport`
-- Project database user: `transport_user`
-- Table: `public.departure_observations`
-- Unique constraint: `uq_departure_observation`
+- A local PostgreSQL server.
+- Database `tampere_transport`.
+- Login role `transport_user` with the configured password.
+- Permission for that role to connect and create project tables
+  in the `public` schema.
 
-The database, user, table and constraint must already exist before
-running the loader or pipeline. The Python scripts do not create them.
+Database and login-role creation are administrator setup steps.
+They are not performed by the Python scripts.
 
-The project database user needs permission to insert into the table.
+For a fresh database, open pgAdmin Query Tool connected to
+`tampere_transport`, then execute these files in order:
+
+1. `sql/001_create_departure_observations.sql`
+2. `sql/002_create_pipeline_runs.sql`
+
+The scripts use `SET LOCAL ROLE transport_user`. Execute them as
+that role, or as an administrator permitted to switch to it.
+
+The scripts create tables and are intended for initial setup.
+Do not rerun them against tables that already exist.
+
+Existing installations with the observations table need only the
+second script when adding run tracking.
 
 ## Run the complete pipeline
 
@@ -141,67 +181,66 @@ The project database user needs permission to insert into the table.
 python pipeline.py
 ```
 
-Each run:
+Each execution:
 
-1. Reads configuration from the environment and `.env`.
-2. Requests departures from Digitransit.
-3. Saves a new timestamped raw snapshot.
-4. Reads the exact file saved during that run.
-5. Validates and transforms the snapshot into flat records.
-6. Loads the records into PostgreSQL in one transaction.
-7. Logs the number of inserted rows and skipped duplicates.
+1. Reads configuration.
+2. Creates a pipeline run record.
+3. Collects departures.
+4. Saves a new raw snapshot.
+5. Reads the exact file saved during that execution.
+6. Validates and transforms its departures.
+7. Loads observations in one transaction.
+8. Records the outcome and committed row counts.
 
-The pipeline uses the path returned by the save function.
-It does not search for the newest file in the raw data folder.
+The pipeline does not search for the latest file.
 
-The snapshot filename is stored in the database as `source_file`,
-linking observations to their raw source.
+It passes transformed records directly to the loader, without
+writing a separate processed JSON file.
 
-The pipeline passes transformed records directly to the database
-loader. It does not write a separate processed JSON file.
+Check the exit code immediately after execution:
 
-Example successful log messages:
-
-```text
-Pipeline started
-API attempt 1/3
-API request succeeded
-Raw snapshot saved to: ...
-Validated and transformed 5 departures
-Load committed: inserted=5, duplicates_skipped=0
-Pipeline finished successfully
+```powershell
+$LASTEXITCODE
 ```
 
-The API may return fewer than five departures.
-
-### Verified pipeline run
-
-On 23 October 2026, a complete pipeline run successfully:
-
-- Collected and saved a new raw snapshot.
-- Validated and transformed five departures.
-- Committed five observations to PostgreSQL.
-- Reported zero skipped duplicates.
+- `0`: successful execution and success tracking.
+- `1`: a handled pipeline or tracking failure.
 
 ## Run individual steps
 
-The individual commands remain useful for learning,
-inspection and retrying a saved snapshot.
-
-### Collect departures only
+### Collect and save only
 
 ```powershell
 python main.py
 ```
 
-This collects departures and saves a raw snapshot.
-It does not load records into PostgreSQL.
+This saves a snapshot without loading PostgreSQL or creating a
+pipeline run record.
 
-Raw files are saved under:
+### Validate and write processed JSON
 
-```text
-data/raw/
+```powershell
+python transform.py data/raw/YOUR_SNAPSHOT_FILENAME.json
 ```
+
+The output is written to `data/processed/` with the raw filename.
+
+Reprocessing replaces that derived output. The raw file is unchanged.
+
+### Load an existing raw snapshot
+
+```powershell
+python load.py data/raw/YOUR_SNAPSHOT_FILENAME.json
+```
+
+This validates, transforms and loads the selected raw file.
+It does not require a processed file or create a pipeline run record.
+
+It is useful for retrying a saved snapshot after a database issue.
+
+## Raw snapshots
+
+Raw snapshots are stored in `data/raw/`.
 
 Example filename:
 
@@ -209,113 +248,105 @@ Example filename:
 departures_tampere_0835_20261023T161349_027220Z.json
 ```
 
-Each snapshot contains:
+Each file contains:
 
 - `metadata`: source, endpoint, stop ID, query and UTC collection times.
-- `response`: the API response without transformations.
+- `response`: the API response.
 
-Each successful save creates a separate file.
+The request-to-response interval includes retry attempts and waits.
 
-The collector currently requests stop `tampere:0835`.
-The endpoint and query are defined in `main.py`.
+Exclusive file creation prevents overwriting an existing snapshot.
 
-### Validate and transform a saved snapshot
+## Stored observations
 
-```powershell
-python transform.py data/raw/YOUR_SNAPSHOT_FILENAME.json
-```
-
-Replace `YOUR_SNAPSHOT_FILENAME.json` with an actual filename.
-
-This command writes flat departure records under:
-
-```text
-data/processed/
-```
-
-The output uses the same filename as the raw snapshot.
-Reprocessing the same snapshot replaces its processed output.
-
-Validation completes before the processed output is written.
-The raw snapshot remains unchanged.
-
-### Load a saved snapshot into PostgreSQL
-
-```powershell
-python load.py data/raw/YOUR_SNAPSHOT_FILENAME.json
-```
-
-The loader reads the raw snapshot, validates and transforms it,
-then loads its records in one transaction.
-
-It does not require a processed JSON file.
-
-This command can retry loading a saved snapshot after a database
-problem has been fixed.
-
-## Validation and transformed fields
-
-Validation checks include:
-
-- Required fields and expected data types.
-- Matching stop IDs in metadata and the API response.
-- A collection timestamp containing a timezone.
-- Consistency between real-time departure and delay values.
-
-Invalid data stops processing before database loading begins.
+The table `public.departure_observations` stores:
 
 | Field | Meaning |
 |---|---|
-| `observed_at_utc` | When the collection result became available |
+| `observation_id` | Generated internal identifier |
+| `observed_at_utc` | When collection received the response |
 | `stop_id` | Stop identifier |
 | `stop_name` | Stop name |
-| `trip_id` | Specific journey identifier |
-| `route_short_name` | Line number or short label |
+| `trip_id` | Journey identifier |
+| `route_short_name` | Line number or label |
 | `headsign` | Destination text, when available |
 | `scheduled_departure_utc` | Timetable departure timestamp |
-| `predicted_departure_utc` | Real-time departure timestamp, when available |
-| `departure_delay_seconds` | Predicted delay, when available |
+| `predicted_departure_utc` | Available predicted departure timestamp |
+| `departure_delay_seconds` | Available predicted delay |
 | `realtime` | Whether real-time information is available |
 | `realtime_state` | Status supplied by the API |
+| `source_file` | Raw snapshot filename |
+| `loaded_at_utc` | Database loading timestamp |
 
-The loader also stores `source_file`, containing the raw snapshot
-filename.
+Validation checks identifiers, types, stop consistency, timestamp
+timezone information and delay consistency.
 
 ## Transactions and duplicates
 
-A transaction groups the inserts into one database operation.
+`load_records()` inserts a complete batch in one transaction.
 
-- If the complete batch succeeds, the transaction commits.
-- If an insert fails, the transaction rolls back the entire batch.
+- Successful batches commit.
+- An exception rolls back the batch.
 
-The loader reports inserted and skipped counts after the transaction
-has committed.
+Inserted and skipped counts are returned after commit.
 
-The unique constraint `uq_departure_observation` prevents duplicate
-observations. The insert uses `ON CONFLICT ... DO NOTHING` to skip
-conflicts with that constraint.
+The unique constraint `uq_departure_observation` uses:
 
-Loading the same unchanged snapshot again skips observations
-already stored in the database.
+- Stop ID.
+- Trip ID.
+- Scheduled departure timestamp.
+- Observation timestamp.
 
-A newly collected snapshot represents a new observation time.
-It may contain trips seen in earlier snapshots.
+Loading the same unchanged snapshot again skips stored observations.
 
-## Reliability and logging
+The same trip can legitimately appear in later snapshots because
+those rows represent observations at different collection times.
 
-The collector makes up to three attempts for:
+Database constraints also check real-time values and delay consistency.
 
-- Connection failures, except SSL certificate errors.
+## Pipeline run tracking
+
+`public.pipeline_runs` stores:
+
+- A UUID identifying the execution.
+- Start and finish timestamps.
+- Status: `running`, `succeeded` or `failed`.
+- Execution stage.
+- Raw snapshot filename, when available.
+- Validated, inserted and duplicate counts, when known.
+- Exception class for recorded failures.
+
+A successful snapshot containing zero departures can still produce
+a successful run record.
+
+Run tracking uses separate transactions from departure loading.
+
+If observations commit but success tracking fails, the observations
+remain stored. The pipeline logs that distinction and returns `1`.
+
+If PostgreSQL is unavailable before tracking starts, no run record
+may be created. Inspect the logs in that situation.
+
+An interrupted process can leave a run marked `running`.
+That status requires investigation rather than assuming it is active.
+
+Tracking began when this feature was introduced. Older executions
+are not reconstructed automatically.
+
+## Retries and logging
+
+Collection makes up to three attempts for:
+
+- Connection failures other than SSL certificate errors.
 - Timeouts.
 - HTTP 500, 502, 503 and 504 responses.
 
-It waits 2 seconds before the second attempt and 4 seconds before
-the third attempt.
+The retry waits are 2 seconds and then 4 seconds.
 
-Authentication errors, rate limits, invalid JSON and GraphQL errors
-stop collection without retries.
+Authentication errors, rate limits, SSL certificate problems,
+invalid JSON and GraphQL errors are not retried.
 
-Logs are written to the terminal and:
+Logs appear in the terminal and:
 
 ```text
 logs/pipeline.log
@@ -323,83 +354,100 @@ logs/pipeline.log
 
 Log timestamps use UTC.
 
-- `INFO`: normal progress.
-- `WARNING`: a temporary collection failure before a retry.
-- `ERROR`: a failed run.
-
-For `pipeline.py`, `main.py` and `load.py`:
-
-- Exit code `0` means success.
-- Exit code `1` means a handled failure.
-
-Check the exit code immediately after running a command:
-
 ```powershell
-$LASTEXITCODE
+Get-Content .\logs\pipeline.log -Tail 25
 ```
 
-View recent logs:
+Saved raw files remain available if later validation or loading fails.
+
+## SQL checks and analysis
+
+Open pgAdmin Query Tool connected to `tampere_transport`.
+Execute queries individually from these files.
+
+### Data quality
+
+`sql/data_quality_checks.sql` checks:
+
+- Observation counts.
+- Rows per snapshot.
+- Selected missing or blank required fields.
+- Real-time field consistency.
+- Predicted delay calculations.
+- Repeated observation identities.
+
+The initial checks passed against ten observations from two snapshots.
+
+Run the checks again as the dataset grows.
+
+### Departure analysis
+
+`sql/departure_analysis.sql` summarises:
+
+- Real-time availability and its percentage.
+- Status counts.
+- Predicted delay averages and ranges.
+- Early, exactly on-schedule and late predictions.
+- Availability and predicted delays by route.
+- Individual observations with the largest predicted delays.
+
+Delay summaries exclude observations marked `CANCELED`.
+
+### Monitoring
+
+`sql/collection_monitoring.sql` inspects loaded observation times,
+snapshots, daily counts and gaps.
+
+`sql/run_monitoring.sql` inspects recorded execution outcomes,
+empty successful runs, failures, freshness and long-running records.
+
+Daily grouping uses Helsinki calendar dates.
+
+These SQL files are manual tools. They are not automatically executed
+by the pipeline and do not send notifications.
+
+## Local scheduled collection
+
+The documented local schedule uses Windows Task Scheduler
+to launch `pipeline.py` every five minutes without overlapping runs.
+
+To reproduce the task, create a task with:
+
+- A daily trigger repeating every five minutes indefinitely.
+- Program: the absolute path to `.venv\Scripts\python.exe`.
+- Arguments: the quoted absolute path to `pipeline.py`.
+- Start in: the project root directory.
+- Existing-instance policy: do not start a new instance.
+- Security option for the current setup: run only when the user is logged on.
+
+Use paths for your own checkout.
+
+The interval must fit the API subscription allowance.
+
+Verify a scheduled execution through Task Scheduler history,
+`logs/pipeline.log` and recent `pipeline_runs` rows.
+
+Collection requires the computer to be awake, PostgreSQL to be
+running and network access to be available.
+
+This project is not hosted independently of the local computer.
+
+## Tests
+
+Run tests with database integration disabled:
 
 ```powershell
-Get-Content .\logs\pipeline.log -Tail 15
-```
-
-If validation or database loading fails after a raw snapshot has
-been saved, the raw file remains available for investigation
-and reprocessing.
-
-## Understanding the data
-
-A route can have several patterns, representing different directions
-or stop sequences. A trip is a specific journey.
-
-Departure values are seconds from the service day's midnight.
-Adding a departure value to `serviceDay` gives its Unix timestamp.
-
-Departure seconds can exceed 86400 for journeys continuing
-after midnight.
-
-Real-time departure values are predictions. They do not confirm
-when a vehicle actually departed.
-
-When `realtime` is false, the transformation sets predicted departure
-and live delay to `null`. A timetable-only delay of zero is not
-evidence that a vehicle is on time.
-
-Cancellation status is preserved in `realtime_state` when supplied.
-It must be considered before interpreting departure predictions.
-
-Collection timestamps describe when this program collected data.
-They do not identify when the provider originally generated
-a prediction.
-
-## Run tests
-
-Run the standard test suite:
-
-```powershell
+$env:RUN_DB_TESTS = "0"
 python -m unittest discover -s tests -v
+Remove-Item Env:RUN_DB_TESTS
 ```
 
-Collection and transformation tests use simulated data and do not
-require a real API key or network connection.
+These tests use simulated collection responses and mocked pipeline
+dependencies. They do not require live API requests.
 
-The database integration test is skipped unless `RUN_DB_TESTS`
-is set to `1`.
+The database integration test is skipped by default.
 
-The tests cover selected behaviours, including:
-
-- Retrying temporary collection failures.
-- Stopping after the attempt limit.
-- Avoiding retries for authentication, rate-limit and GraphQL errors.
-- Converting departures into structured records.
-- Representing unavailable live values as null.
-- Rejecting missing identifiers and inconsistent delays.
-- Handling departure times after midnight.
-
-### Run the PostgreSQL rollback integration test
-
-This test requires the configured local PostgreSQL database.
+To run the rollback test against the configured local database:
 
 ```powershell
 $env:RUN_DB_TESTS = "1"
@@ -407,97 +455,71 @@ python -m unittest discover -s tests -p "test_load_integration.py" -v
 Remove-Item Env:RUN_DB_TESTS
 ```
 
-The test deliberately makes the second record in a batch invalid.
-It then checks through a separate connection that the first record
-was not committed.
+The integration test deliberately makes a batch invalid and checks
+that no partial batch remains committed.
 
-The rollback integration test has passed against the local database.
+The rollback integration test previously passed against the local
+database.
 
-Passing tests cover these scenarios, not every possible failure.
-The complete pipeline has also been verified through a manual run.
+Tests cover selected scenarios, not every possible failure.
+Run-tracking success and empty-response paths do not yet have
+dedicated automated pipeline tests.
 
-## SQL data-quality checks
+## Interpreting the data
 
-The file `sql/data_quality_checks.sql` contains manual checks for:
+Departure values are seconds from the service day's midnight.
+Adding them to `serviceDay` gives a Unix timestamp.
 
-- Total observations and observation counts per snapshot.
-- Missing or blank values in selected required fields.
-- Consistency between the real-time flag, prediction and delay fields.
-- Agreement between predicted delays and departure timestamps.
-- Repeated observation identities.
+Values above 86400 support services continuing after midnight.
 
-To run the checks, open pgAdmin, select `tampere_transport`,
-open Query Tool and execute the queries from the file.
+Predictions do not confirm actual departure times.
 
-The first checks were run against 10 observations from two snapshots,
-with five observations per snapshot.
+For timetable-only rows, prediction and delay are `NULL`.
+Zero is a predicted delay value, not a substitute for missing data.
 
-The checked required fields had no missing values. No real-time
-field inconsistencies, delay mismatches or repeated observation
-identities were found.
+A negative delay means an early prediction.
+A positive delay means a late prediction.
 
-These checks inspect the data currently stored. They do not run
-automatically as part of the Python pipeline.
+Repeated observations of one trip contribute repeatedly to current
+SQL summaries. Observation counts are not unique-departure counts.
 
-## Scheduled collection and monitoring
+The dataset covers one selected stop and collected time periods.
+It does not represent the entire transport network.
 
-The local transport pipeline is scheduled through Windows Task Scheduler
-to run every five minutes.
+## Remaining work for this version
 
-The task uses the project's virtual-environment Python interpreter
-and runs `pipeline.py`. Overlapping task instances are disabled.
+- Verify scheduled collection over a documented period.
+- Write an exploratory report with actual results and collection gaps.
+- Re-run tests and SQL quality checks before the final checkpoint.
 
-The current configuration runs while the user is logged on.
-Collection requires the computer to be awake, PostgreSQL to be
-running and network access to be available.
+## Possible future improvements
 
-The file `sql/collection_monitoring.sql` contains manual queries for:
-
-- The latest loaded observation time and its age.
-- Recent loaded snapshots.
-- Daily snapshot and observation counts.
-- Intervals between loaded snapshots.
-- Gaps longer than ten minutes.
-
-Daily counts use Helsinki calendar dates.
-
-These queries inspect loaded departure observations. They cannot
-distinguish failed runs from successful snapshots containing zero
-departures. Raw files, application logs and Task Scheduler history
-help investigate those cases.
-
-Monitoring queries are run manually; automatic alerts are not
-implemented.
+- Automatic monitoring and notifications.
+- Additional pipeline and run-tracking tests.
+- Cloud deployment independent of the local computer.
+- More stops and configurable collection settings.
 
 ## What I am learning
 
-- API authentication and HTTP requests
-- GraphQL queries and JSON responses
-- Public transport routes, patterns, stops and trips
-- Environment variables and secret handling
-- Retries, backoff and logging
-- Raw snapshots and collection metadata
-- Data validation and transformation
-- UTC timestamps and missing values
-- PostgreSQL and parameterized SQL
-- Database transactions and rollback
-- Duplicate prevention with unique constraints
-- Connecting reusable functions into a pipeline
-- Automated testing with mocks and database integration tests
-- Git and project documentation
+- HTTP APIs, authentication and GraphQL.
+- Retries and operational logging.
+- Raw data snapshots and provenance.
+- Validation, transformation and UTC timestamps.
+- PostgreSQL, parameterized SQL and constraints.
+- Transactions, rollback and duplicate prevention.
+- Pipeline execution tracking.
+- Automated tests and mocks.
+- SQL analysis and monitoring.
+- Local scheduling.
+- Git and project documentation.
 
 ## AI assistance
 
-I use ChatGPT and Codex as learning assistants for explanations,
-code suggestions, debugging, tests and documentation.
+I use ChatGPT and Codex for explanations, code suggestions,
+debugging, tests and documentation.
 
-I write and run the project step by step, review the suggestions
+I write and run the project step by step, review suggestions
 and use the results to develop my own understanding.
-
-## Planned next steps
-
-- Pipeline run tracking and automatic failure alerts
-- Reports on predicted delays and real-time data availability
 
 ## Data source
 
